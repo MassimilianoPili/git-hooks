@@ -1,0 +1,108 @@
+#!/bin/bash
+# strip-ai-attribution: removes AI-generated attribution lines from staged files
+# git config --global core.hooksPath "C:/Users/<massimiliano.pili>/.config/git/hooks"
+#
+# Patterns loaded from ~/.config/git/ai-patterns.txt (one extended regex per
+# line; comments start with #), matched case-insensitively. Falls back to a
+# hardcoded set.
+#
+# Cost on Windows, where every process spawn takes hundreds of ms and bash
+# builtins read a long NUL-separated list in seconds: one git grep over the
+# staged content (the index, binary files skipped), so only matching paths
+# reach the shell; one git diff more when something matches. A commit with no
+# attribution anywhere in the index costs one process, whatever its size.
+#
+# The rewrite works on the staged blob and on the working-tree file
+# separately: hunks left unstaged (git add -p) stay unstaged. grep -U keeps
+# CR characters (CRLF files stay CRLF).
+
+set -euo pipefail
+shopt -s lastpipe
+# Paths and the pattern go to native git.exe as they are, no MSYS conversion.
+export MSYS2_ARG_CONV_EXCL='*'
+
+PATTERNS_FILE="${HOME}/.config/git/ai-patterns.txt"
+
+PATTERN=""
+if [ -f "$PATTERNS_FILE" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
+    PATTERN+="${PATTERN:+|}${line}"
+  done < "$PATTERNS_FILE"
+fi
+
+if [ -z "$PATTERN" ]; then
+  PATTERN='^\s*Co-Authored-By:.*(Claude|Anthropic|noreply@anthropic|Copilot|copilot@github|ChatGPT|OpenAI|noreply@openai|Cursor|Gemini|CodeWhisperer|Cody)'
+  PATTERN+='|^.*Generated (with|by).*(Claude|Copilot|ChatGPT|Cursor|Gemini|OpenAI|CodeWhisperer)'
+fi
+
+# Index paths whose staged content has a match. git grep exits 1 when nothing
+# matches: only a status above 1 is an error. --no-color: with color.ui=always
+# the paths would come back wrapped in ANSI codes.
+FOUND=()
+set +e
+git grep --no-color --cached -l -z -I -i -E -e "$PATTERN" -- ':/' | mapfile -d '' -t FOUND
+STATUS=${PIPESTATUS[0]}
+set -e
+if [ "$STATUS" -gt 1 ]; then
+  echo "[pre-commit] ERROR: git grep failed (exit ${STATUS}); commit stopped." >&2
+  exit 1
+fi
+
+[ "${#FOUND[@]}" -gt 0 ] || exit 0
+
+# Of those, the staged ones (added, copied, modified, renamed), with the index
+# mode and blob the rewrite needs. Raw format:
+# ":<old mode> <new mode> <old blob> <new blob> <status>" NUL "<path>" NUL.
+# The found paths go as pathspecs unless they would pass the Windows command
+# line limit (32767 characters); then the diff covers the whole index.
+declare -A IS_FOUND=() MODE=() BLOB=()
+SCOPE_LEN=0
+for path in "${FOUND[@]}"; do
+  IS_FOUND["$path"]=1
+  SCOPE_LEN=$((SCOPE_LEN + ${#path} + 3))
+done
+SCOPE=()
+[ "$SCOPE_LEN" -gt 20000 ] || SCOPE=("${FOUND[@]}")
+
+MATCHES=()
+git --literal-pathspecs diff --no-color --cached --raw -z --no-abbrev --no-renames --diff-filter=ACMR -- "${SCOPE[@]}" \
+  | while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
+      [ -n "${IS_FOUND[$path]+set}" ] || continue
+      fields=($meta)
+      MODE["$path"]=${fields[1]}
+      BLOB["$path"]=${fields[3]}
+      MATCHES+=("$path")
+    done
+
+[ "${#MATCHES[@]}" -gt 0 ] || exit 0
+
+GIT_DIR_ABS=$(git rev-parse --absolute-git-dir)
+TMP_IN="$GIT_DIR_ABS/ai-strip.in.tmp"
+TMP_OUT="$GIT_DIR_ABS/ai-strip.out.tmp"
+trap 'rm -f "$TMP_IN" "$TMP_OUT"' EXIT
+
+for path in "${MATCHES[@]}"; do
+  # Symlinks: the blob is the link target, not file content.
+  [ "${MODE[$path]}" != "120000" ] || continue
+
+  # Staged version: strip the lines, store the new blob, point the index at it.
+  git cat-file blob "${BLOB[$path]}" > "$TMP_IN"
+  COUNT=$(grep -U -Eic -- "$PATTERN" "$TMP_IN" || true)
+  grep -U -Eiv -- "$PATTERN" "$TMP_IN" > "$TMP_OUT" || true
+  NEW_BLOB=$(git hash-object -w --no-filters -- "$TMP_OUT")
+  git update-index --cacheinfo "${MODE[$path]},${NEW_BLOB},${path}"
+
+  # Working-tree version: strip the same lines, leave every other change unstaged.
+  if [ -f "$path" ] && grep -U -Eqi -- "$PATTERN" "$path"; then
+    grep -U -Eiv -- "$PATTERN" "$path" > "$TMP_OUT" || true
+    cat -- "$TMP_OUT" > "$path"
+  fi
+
+  echo "[pre-commit] Stripped ${COUNT} AI attribution line(s) from: ${path}"
+done
+
+echo "[pre-commit] AI attributions removed. Commit proceeding."
+
+exit 0

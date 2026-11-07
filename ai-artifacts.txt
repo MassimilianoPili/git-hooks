@@ -1,0 +1,28 @@
+# ==============================================================================
+# AI Artifact Paths — global git pre-commit (block-ai-artifacts)
+# Source of truth: ~/.config/git/ai-artifacts.txt
+#
+# One extended regex per line, matched against STAGED FILE PATHS.
+# Matching files are auto-unstaged (removed from the commit, kept on disk).
+# Lines starting with # are comments.
+#
+# (^|/) anchors to a path-component boundary so directory matches are precise:
+#   (^|/)\.claude/  matches  .claude/x  and  sub/.claude/x
+#   but NOT  CLAUDE.md  (root config file — intentionally committable)
+#
+# To ALLOW a normally-blocked path, comment out or remove its line.
+# To block a shared-config file too (e.g. .cursorrules), add it explicitly.
+# ==============================================================================
+
+# --- AI tool session/state directories ---
+(^|/)\.claude/
+(^|/)\.copilot/
+(^|/)\.cursor/
+(^|/)\.continue/
+(^|/)\.windsurf/
+(^|/)\.codeium/
+(^|/)\.aider[^/]*/
+
+# --- AI tool session/state files ---
+(^|/)\.aider\.
+(^|/)\.windsurfrules$

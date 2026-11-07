@@ -1,0 +1,26 @@
+#!/bin/bash
+# Rifiuta la cancellazione di un ref remoto.
+#
+# stdin: una riga per ref, "<local_ref> <local_sha> <remote_ref> <remote_sha>".
+# In una cancellazione (git push --delete, oppure push :branch) il local_sha e' tutto zeri.
+# Il confronto toglie tutti gli zeri invece di confrontare una costante, cosi' vale sia per
+# SHA-1 (40 caratteri) sia per SHA-256 (64).
+
+blocked=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "$remote_ref" ] || continue
+  if [ -n "$local_sha" ] && [ -z "${local_sha//0/}" ]; then
+    echo "pre-push: rifiutata la cancellazione del ref remoto $remote_ref" >&2
+    blocked=1
+  fi
+done
+
+if [ "$blocked" = 1 ]; then
+  echo "pre-push: cancellare un ref remoto e' irreversibile e visibile agli altri." >&2
+  echo "pre-push: se e' voluto, cancellalo dall'interfaccia del remoto, o salta l'hook" >&2
+  echo "pre-push: per quel singolo comando sapendo cosa stai facendo." >&2
+  exit 1
+fi
+
+exit 0

@@ -1,0 +1,32 @@
+#!/bin/bash
+# strip-ai-attribution: removes AI-generated attribution from commit messages
+# git config --global core.hooksPath "C:/Users/<massimiliano.pili>/.config/git/hooks"
+
+MSG_FILE="$1"
+
+if [ ! -f "$MSG_FILE" ]; then
+  exit 0
+fi
+
+PATTERNS_FILE="${HOME}/.config/git/ai-patterns.txt"
+
+if [ -f "$PATTERNS_FILE" ]; then
+  PATTERN=$(grep -Ev '^\s*(#|$)' "$PATTERNS_FILE" \
+    | grep -Ei '(Co-Authored-By|Generated)' \
+    | paste -sd'|' - || true)
+fi
+
+if [ -n "${PATTERN:-}" ]; then
+  grep -Eiv "$PATTERN" "$MSG_FILE" > "${MSG_FILE}.tmp" || true
+  mv "${MSG_FILE}.tmp" "$MSG_FILE"
+else
+  sed -i '/[Cc]o-[Aa]uthored-[Bb]y:.*[Cc]laude/d' "$MSG_FILE"
+  sed -i '/[Cc]o-[Aa]uthored-[Bb]y:.*[Aa]nthropic/d' "$MSG_FILE"
+  sed -i '/[Cc]o-[Aa]uthored-[Bb]y:.*noreply@anthropic/d' "$MSG_FILE"
+  sed -i '/Generated with.*[Cc]laude/d' "$MSG_FILE"
+fi
+
+# Trim trailing blank lines
+sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$MSG_FILE"
+
+exit 0

@@ -1,0 +1,32 @@
+#!/bin/bash
+# Dispatcher: pre-push (git global)
+# git config --global core.hooksPath "C:/Users/<massimiliano.pili>/.config/git/hooks"
+#
+# Runs all executable scripts in pre-push.d/ then chains to per-repo hook.
+# NB: pre-push riceve la lista dei ref su stdin. Lo stdin si consuma una volta sola,
+# quindi si legge qui e si ripropone a ogni hook.
+
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)/pre-push.d"
+REFS="$(cat)"
+
+if [ -d "$HOOK_DIR" ]; then
+  for hook in "$HOOK_DIR"/*; do
+    [ -x "$hook" ] || continue
+    printf '%s\n' "$REFS" | "$hook" "$@" || exit $?
+  done
+fi
+
+# Chain to per-repo pre-push hook
+if [ -z "${_GLOBAL_PRE_PUSH_RAN:-}" ]; then
+  GIT_DIR_ABS="$(git rev-parse --absolute-git-dir 2>/dev/null)"
+  if [ -n "$GIT_DIR_ABS" ]; then
+    LOCAL_HOOK="$GIT_DIR_ABS/hooks/pre-push"
+    if [ -x "$LOCAL_HOOK" ]; then
+      export _GLOBAL_PRE_PUSH_RAN=1
+      printf '%s\n' "$REFS" | "$LOCAL_HOOK" "$@"
+      exit $?
+    fi
+  fi
+fi
+
+exit 0

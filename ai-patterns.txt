@@ -1,0 +1,33 @@
+# ==============================================================================
+# AI Attribution Patterns — global git hooks
+# Source of truth: ~/.config/git/ai-patterns.txt
+#
+# One extended regex per line. Lines starting with # are comments.
+# Used by both pre-commit (file content) and commit-msg (message) hooks.
+# Case-insensitive matching is applied by the hooks (grep -i / sed I).
+# ==============================================================================
+
+# --- Co-Authored-By trailers (AI tools) ---
+^\s*Co-Authored-By:.*\b(Claude|Anthropic)\b
+^\s*Co-Authored-By:.*noreply@anthropic\.com
+^\s*Co-Authored-By:.*\b(Copilot|copilot-ai)\b
+^\s*Co-Authored-By:.*copilot@github\.com
+^\s*Co-Authored-By:.*\b(ChatGPT|OpenAI)\b
+^\s*Co-Authored-By:.*noreply@openai\.com
+^\s*Co-Authored-By:.*\bCursor\b.*noreply@cursor
+^\s*Co-Authored-By:.*\b(Gemini|CodeWhisperer|Cody)\b
+
+# --- "Generated with/by" footers ---
+^.*Generated (with|by).*(Claude|Claude Code|Anthropic)
+^.*Generated (with|by).*(GitHub Copilot|Copilot)
+^.*Generated (with|by).*(ChatGPT|GPT-[0-9]|OpenAI)
+^.*Generated (with|by).*(Cursor|Gemini|CodeWhisperer|Cody)
+
+# --- AI disclaimer lines (full-line only) ---
+^[[:space:]*//#;-]*\s*AI-generated\s+(code|content)\s*\.?\s*$
+^[[:space:]*//#;-]*\s*AI-assisted\s+(code|content)\s*\.?\s*$
+^[[:space:]*//#;-]*\s*This (code|file) was (generated|written|created) by an? AI\b
+
+# --- Tool-specific inline comments (full-line only) ---
+^[[:space:]*//#;-]*\s*GitHub Copilot suggestion\s*$
+^[[:space:]*//#;-]*\s*Suggested by (GitHub )?Copilot\s*$

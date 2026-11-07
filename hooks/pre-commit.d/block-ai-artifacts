@@ -1,0 +1,94 @@
+#!/bin/bash
+# block-ai-artifacts: unstages AI tool session/artifact files from commits
+# git config --global core.hooksPath "C:/Users/<massimiliano.pili>/.config/git/hooks"
+#
+# Paths loaded from ~/.config/git/ai-artifacts.txt (one extended regex per
+# line; comments start with #). Matching staged files are removed from the
+# commit but kept on disk. Falls back to a hardcoded set.
+#
+# Constant process count, whatever the number of staged files: a commit with
+# no artifact staged costs two processes (git diff, grep); with artifacts, one
+# git reset more. On Windows every process spawn costs hundreds of ms, so the
+# pattern file is read with bash builtins. Paths travel NUL-separated: names
+# with spaces, quotes or non-ASCII characters are handled.
+#
+# Merge commit: only paths absent from HEAD and from every MERGE_HEAD are
+# unstaged. A path that a parent already tracks is left alone: unstaging it
+# would silently revert that branch's content in the merge commit.
+
+set -euo pipefail
+shopt -s lastpipe
+
+ARTIFACTS_FILE="${HOME}/.config/git/ai-artifacts.txt"
+
+PATTERN=""
+if [ -f "$ARTIFACTS_FILE" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
+    PATTERN+="${PATTERN:+|}${line}"
+  done < "$ARTIFACTS_FILE"
+fi
+
+if [ -z "$PATTERN" ]; then
+  PATTERN='(^|/)\.(claude|copilot|cursor|continue|windsurf|codeium|aider[^/]*)/|(^|/)\.aider\.'
+fi
+
+MATCHES=()
+git diff --no-color --cached --name-only -z --diff-filter=ACMR \
+  | { grep -zE "$PATTERN" || true; } \
+  | mapfile -d '' -t MATCHES
+
+[ "${#MATCHES[@]}" -gt 0 ] || exit 0
+
+GIT_DIR_ABS=$(git rev-parse --absolute-git-dir)
+TO_UNSTAGE=("${MATCHES[@]}")
+LEFT_IN_MERGE=0
+
+if [ -f "$GIT_DIR_ABS/MERGE_HEAD" ]; then
+  PARENTS=(HEAD)
+  while IFS= read -r head || [ -n "$head" ]; do
+    head=${head%$'\r'}
+    [ -n "$head" ] && PARENTS+=("$head")
+  done < "$GIT_DIR_ABS/MERGE_HEAD"
+  # One mark per parent that does not have the path: the path is new to the
+  # merge only when every parent lacks it. grep first: a merge can add
+  # thousands of paths, and bash builtins read a long list in seconds.
+  declare -A ABSENT=()
+  for p in "${MATCHES[@]}"; do ABSENT["$p"]=""; done
+  for parent in "${PARENTS[@]}"; do
+    while IFS= read -r -d '' p; do
+      [ -n "${ABSENT[$p]+set}" ] && ABSENT["$p"]+="x"
+    done < <(git diff --no-color --cached --name-only -z --no-renames --diff-filter=A "$parent" \
+               | { grep -zE "$PATTERN" || true; })
+  done
+  TO_UNSTAGE=()
+  for p in "${MATCHES[@]}"; do
+    if [ "${#ABSENT[$p]}" -eq "${#PARENTS[@]}" ]; then
+      TO_UNSTAGE+=("$p")
+    else
+      LEFT_IN_MERGE=$((LEFT_IN_MERGE + 1))
+    fi
+  done
+fi
+
+if [ "$LEFT_IN_MERGE" -gt 0 ]; then
+  echo "[pre-commit] Merge: ${LEFT_IN_MERGE} AI artifact path(s) already tracked on a parent, left in the commit."
+fi
+
+[ "${#TO_UNSTAGE[@]}" -gt 0 ] || exit 0
+
+# No explicit HEAD: with the default target, git reset also works on an unborn
+# branch (first commit), where an explicit HEAD is an unknown revision.
+if ! printf '%s\0' "${TO_UNSTAGE[@]}" \
+  | git --literal-pathspecs reset -q --pathspec-from-file=- --pathspec-file-nul; then
+  echo "[pre-commit] ERROR: could not unstage ${#TO_UNSTAGE[@]} AI artifact(s); commit stopped." >&2
+  exit 1
+fi
+
+for file in "${TO_UNSTAGE[@]}"; do
+  echo "[pre-commit] Unstaged AI artifact (kept on disk, not committed): ${file}"
+done
+echo "[pre-commit] AI artifacts kept out of commit."
+
+exit 0
