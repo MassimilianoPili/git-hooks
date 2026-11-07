@@ -1,32 +1,57 @@
 #!/bin/bash
 # strip-ai-attribution: removes AI-generated attribution from commit messages
 # git config --global core.hooksPath "C:/Users/<massimiliano.pili>/.config/git/hooks"
+#
+# Uses the Co-Authored-By and Generated lines of ~/.config/git/ai-patterns.txt
+# (path overridable with AI_PATTERNS_FILE), matched case-insensitively; falls
+# back to a hardcoded set. One process (grep) per commit: on Windows every
+# process spawn costs hundreds of ms, so the pattern file, the trailing blank
+# line trim and the rewrite of the message use bash builtins.
 
-MSG_FILE="$1"
+set -uo pipefail
+shopt -s lastpipe
 
-if [ ! -f "$MSG_FILE" ]; then
-  exit 0
-fi
+MSG_FILE="${1:-}"
 
-PATTERNS_FILE="${HOME}/.config/git/ai-patterns.txt"
+[ -f "$MSG_FILE" ] || exit 0
 
+PATTERNS_FILE="${AI_PATTERNS_FILE:-${HOME}/.config/git/ai-patterns.txt}"
+
+PATTERN=""
 if [ -f "$PATTERNS_FILE" ]; then
-  PATTERN=$(grep -Ev '^\s*(#|$)' "$PATTERNS_FILE" \
-    | grep -Ei '(Co-Authored-By|Generated)' \
-    | paste -sd'|' - || true)
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
+    [[ ${line,,} =~ co-authored-by|generated ]] || continue
+    PATTERN+="${PATTERN:+|}${line}"
+  done < "$PATTERNS_FILE"
 fi
 
-if [ -n "${PATTERN:-}" ]; then
-  grep -Eiv "$PATTERN" "$MSG_FILE" > "${MSG_FILE}.tmp" || true
-  mv "${MSG_FILE}.tmp" "$MSG_FILE"
+# [C]laude: same regex, but this line no longer matches it, so the
+# pre-commit strip leaves the line in place when this file is committed.
+if [ -z "$PATTERN" ]; then
+  PATTERN='Co-Authored-By:.*(Claude|Anthropic|noreply@anthropic)|Generated with.*[C]laude'
+fi
+
+# grep -v exits 1 when it selects no line (every line was attribution): only a
+# status above 1 is an error, and then the message stays as it is.
+KEPT=()
+grep -Eiv -- "$PATTERN" "$MSG_FILE" | mapfile -t KEPT
+STATUS=${PIPESTATUS[0]}
+if [ "$STATUS" -gt 1 ]; then
+  echo "[commit-msg] ERROR: grep failed (exit ${STATUS}); commit stopped." >&2
+  exit 1
+fi
+
+# Trim trailing blank lines.
+while [ "${#KEPT[@]}" -gt 0 ] && [ -z "${KEPT[-1]}" ]; do
+  unset 'KEPT[-1]'
+done
+
+if [ "${#KEPT[@]}" -gt 0 ]; then
+  printf '%s\n' "${KEPT[@]}" > "$MSG_FILE"
 else
-  sed -i '/[Cc]o-[Aa]uthored-[Bb]y:.*[Cc]laude/d' "$MSG_FILE"
-  sed -i '/[Cc]o-[Aa]uthored-[Bb]y:.*[Aa]nthropic/d' "$MSG_FILE"
-  sed -i '/[Cc]o-[Aa]uthored-[Bb]y:.*noreply@anthropic/d' "$MSG_FILE"
-  sed -i '/Generated with.*[Cc]laude/d' "$MSG_FILE"
+  : > "$MSG_FILE"
 fi
-
-# Trim trailing blank lines
-sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$MSG_FILE"
 
 exit 0

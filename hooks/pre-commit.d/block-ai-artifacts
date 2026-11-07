@@ -2,9 +2,9 @@
 # block-ai-artifacts: unstages AI tool session/artifact files from commits
 # git config --global core.hooksPath "C:/Users/<massimiliano.pili>/.config/git/hooks"
 #
-# Paths loaded from ~/.config/git/ai-artifacts.txt (one extended regex per
-# line; comments start with #). Matching staged files are removed from the
-# commit but kept on disk. Falls back to a hardcoded set.
+# Paths loaded from ~/.config/git/ai-artifacts.txt, or AI_ARTIFACTS_FILE (one
+# extended regex per line; comments start with #). Matching staged files are
+# removed from the commit but kept on disk. Falls back to a hardcoded set.
 #
 # Constant process count, whatever the number of staged files: a commit with
 # no artifact staged costs two processes (git diff, grep); with artifacts, one
@@ -19,7 +19,7 @@
 set -euo pipefail
 shopt -s lastpipe
 
-ARTIFACTS_FILE="${HOME}/.config/git/ai-artifacts.txt"
+ARTIFACTS_FILE="${AI_ARTIFACTS_FILE:-${HOME}/.config/git/ai-artifacts.txt}"
 
 PATTERN=""
 if [ -f "$ARTIFACTS_FILE" ]; then
@@ -34,10 +34,21 @@ if [ -z "$PATTERN" ]; then
   PATTERN='(^|/)\.(claude|copilot|cursor|continue|windsurf|codeium|aider[^/]*)/|(^|/)\.aider\.'
 fi
 
+# grep exits 1 when no path matches: only a status above 1 is an error. The
+# status is read from PIPESTATUS instead of a { grep || true; } group, which
+# would cost one more process.
 MATCHES=()
+set +e
 git diff --no-color --cached --name-only -z --diff-filter=ACMR \
-  | { grep -zE "$PATTERN" || true; } \
+  | grep -zE "$PATTERN" \
   | mapfile -d '' -t MATCHES
+STATUS=("${PIPESTATUS[@]}")
+set -e
+[ "${STATUS[0]}" -eq 0 ] || exit "${STATUS[0]}"
+if [ "${STATUS[1]}" -gt 1 ]; then
+  echo "[pre-commit] ERROR: grep failed (exit ${STATUS[1]}); commit stopped." >&2
+  exit 1
+fi
 
 [ "${#MATCHES[@]}" -gt 0 ] || exit 0
 

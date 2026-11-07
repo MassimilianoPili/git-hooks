@@ -2,9 +2,9 @@
 # strip-ai-attribution: removes AI-generated attribution lines from staged files
 # git config --global core.hooksPath "C:/Users/<massimiliano.pili>/.config/git/hooks"
 #
-# Patterns loaded from ~/.config/git/ai-patterns.txt (one extended regex per
-# line; comments start with #), matched case-insensitively. Falls back to a
-# hardcoded set.
+# Patterns loaded from ~/.config/git/ai-patterns.txt, or AI_PATTERNS_FILE (one
+# extended regex per line; comments start with #), matched case-insensitively.
+# Falls back to a hardcoded set.
 #
 # Cost on Windows, where every process spawn takes hundreds of ms and bash
 # builtins read a long NUL-separated list in seconds: one git grep over the
@@ -21,7 +21,7 @@ shopt -s lastpipe
 # Paths and the pattern go to native git.exe as they are, no MSYS conversion.
 export MSYS2_ARG_CONV_EXCL='*'
 
-PATTERNS_FILE="${HOME}/.config/git/ai-patterns.txt"
+PATTERNS_FILE="${AI_PATTERNS_FILE:-${HOME}/.config/git/ai-patterns.txt}"
 
 PATTERN=""
 if [ -f "$PATTERNS_FILE" ]; then

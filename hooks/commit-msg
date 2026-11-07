@@ -3,8 +3,13 @@
 # git config --global core.hooksPath "C:/Users/<massimiliano.pili>/.config/git/hooks"
 #
 # Runs all executable scripts in commit-msg.d/ then chains to per-repo hook.
+# Own directory from $0 with parameter expansion: on Windows every process
+# spawn costs hundreds of ms, $(cd "$(dirname "$0")" && pwd) costs two.
 
-HOOK_DIR="$(cd "$(dirname "$0")" && pwd)/commit-msg.d"
+case $0 in
+  */* | *\\*) HOOK_DIR="${0%[/\\]*}/commit-msg.d" ;;
+  *) HOOK_DIR="./commit-msg.d" ;;
+esac
 
 if [ -d "$HOOK_DIR" ]; then
   for hook in "$HOOK_DIR"/*; do

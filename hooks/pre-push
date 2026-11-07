@@ -5,14 +5,22 @@
 # Runs all executable scripts in pre-push.d/ then chains to per-repo hook.
 # NB: pre-push riceve la lista dei ref su stdin. Lo stdin si consuma una volta sola,
 # quindi si legge qui e si ripropone a ogni hook.
+# Own directory and stdin without a process: on Windows every process spawn
+# costs hundreds of ms ($(cd "$(dirname "$0")" && pwd) costs two, $(cat) one).
 
-HOOK_DIR="$(cd "$(dirname "$0")" && pwd)/pre-push.d"
-REFS="$(cat)"
+case $0 in
+  */* | *\\*) HOOK_DIR="${0%[/\\]*}/pre-push.d" ;;
+  *) HOOK_DIR="./pre-push.d" ;;
+esac
+
+mapfile -t REF_LINES
+printf -v REFS '%s\n' "${REF_LINES[@]}"
+REFS=${REFS%$'\n'}
 
 if [ -d "$HOOK_DIR" ]; then
   for hook in "$HOOK_DIR"/*; do
     [ -x "$hook" ] || continue
-    printf '%s\n' "$REFS" | "$hook" "$@" || exit $?
+    "$hook" "$@" <<< "$REFS" || exit $?
   done
 fi
 
@@ -23,7 +31,7 @@ if [ -z "${_GLOBAL_PRE_PUSH_RAN:-}" ]; then
     LOCAL_HOOK="$GIT_DIR_ABS/hooks/pre-push"
     if [ -x "$LOCAL_HOOK" ]; then
       export _GLOBAL_PRE_PUSH_RAN=1
-      printf '%s\n' "$REFS" | "$LOCAL_HOOK" "$@"
+      "$LOCAL_HOOK" "$@" <<< "$REFS"
       exit $?
     fi
   fi
