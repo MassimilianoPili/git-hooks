@@ -18,10 +18,12 @@
 ^\s*Co-Authored-By:.*\b(Gemini|CodeWhisperer|Cody)\b
 
 # --- "Generated with/by" footers ---
-^.*Generated (with|by).*(Claude|Claude Code|Anthropic)
-^.*Generated (with|by).*(GitHub Copilot|Copilot)
-^.*Generated (with|by).*(ChatGPT|GPT-[0-9]|OpenAI)
-^.*Generated (with|by).*(Cursor|Gemini|CodeWhisperer|Cody)
+# No leading ^.* : a line contains X exactly when it matches ^.*X, and on very
+# long lines (minified JS) ^.* makes the regex engine backtrack for minutes.
+Generated (with|by).*(Claude|Claude Code|Anthropic)
+Generated (with|by).*(GitHub Copilot|Copilot)
+Generated (with|by).*(ChatGPT|GPT-[0-9]|OpenAI)
+Generated (with|by).*(Cursor|Gemini|CodeWhisperer|Cody)
 
 # --- AI disclaimer lines (full-line only) ---
 ^[[:space:]*//#;-]*\s*AI-generated\s+(code|content)\s*\.?\s*$

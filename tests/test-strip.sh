@@ -45,9 +45,17 @@ echo "== attribution committed earlier, not staged"
 mkrepo committed
 printf 'doc\nGenerated with %s Code\n' "$AI" > old.md; g add old.md; g commit -qm base
 echo clean > new.txt; g add new.txt
-bash "$HOOK" > /dev/null
+GIT_TRACE=1 bash "$HOOK" > /dev/null 2> "$WORK/trace"
 check "hook exits 0" "$?" "0"
 check "committed file untouched" "$(lines "$(git show :old.md)")" "doc|Generated with $AI Code"
+# The search must cover the staged files only, never the whole index: on a
+# large repository that costs minutes.
+check "git grep searches only the staged path" \
+  "$(grep -o 'built-in: git grep.*' "$WORK/trace" | grep -o ' -- .*$')" " -- new.txt"
+
+echo "== pattern file"
+check "no pattern starts with ^.* (backtracks on long lines)" \
+  "$(grep -c '^\^\.\*' "$AI_PATTERNS_FILE")" "0"
 
 echo "== many staged files, few with attribution"
 mkrepo many

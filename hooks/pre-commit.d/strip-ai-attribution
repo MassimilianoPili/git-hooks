@@ -6,11 +6,11 @@
 # extended regex per line; comments start with #), matched case-insensitively.
 # Falls back to a hardcoded set.
 #
-# Cost on Windows, where every process spawn takes hundreds of ms and bash
-# builtins read a long NUL-separated list in seconds: one git grep over the
-# staged content (the index, binary files skipped), so only matching paths
-# reach the shell; one git diff more when something matches. A commit with no
-# attribution anywhere in the index costs one process, whatever its size.
+# Cost on Windows, where every process spawn takes hundreds of ms: one git diff
+# for the staged paths, one git grep on them (binary files skipped), and work
+# only for the files that match. The search covers the staged files only, never
+# the whole index: on a large repository that costs minutes. A commit with no
+# attribution costs two processes.
 #
 # The rewrite works on the staged blob and on the working-tree file
 # separately: hunks left unstaged (git add -p) stay unstaged. grep -U keeps
@@ -34,26 +34,50 @@ fi
 
 if [ -z "$PATTERN" ]; then
   PATTERN='^\s*Co-Authored-By:.*(Claude|Anthropic|noreply@anthropic|Copilot|copilot@github|ChatGPT|OpenAI|noreply@openai|Cursor|Gemini|CodeWhisperer|Cody)'
-  PATTERN+='|^.*Generated (with|by).*(Claude|Copilot|ChatGPT|Cursor|Gemini|OpenAI|CodeWhisperer)'
+  PATTERN+='|Generated (with|by).*(Claude|Copilot|ChatGPT|Cursor|Gemini|OpenAI|CodeWhisperer)'
 fi
 
-# Index paths whose staged content has a match. git grep exits 1 when nothing
+# Staged paths: added, copied, modified, renamed. Bash reads them at about half
+# a millisecond each: seconds only for a merge of thousands of files.
+STAGED=()
+git diff --no-color --cached --name-only -z --diff-filter=ACMR | mapfile -d '' -t STAGED
+
+[ "${#STAGED[@]}" -gt 0 ] || exit 0
+
+# Staged paths whose staged content has a match. git grep exits 1 when nothing
 # matches: only a status above 1 is an error. --no-color: with color.ui=always
 # the paths would come back wrapped in ANSI codes.
 FOUND=()
-set +e
-git grep --no-color --cached -l -z -I -i -E -e "$PATTERN" -- ':/' | mapfile -d '' -t FOUND
-STATUS=${PIPESTATUS[0]}
-set -e
-if [ "$STATUS" -gt 1 ]; then
-  echo "[pre-commit] ERROR: git grep failed (exit ${STATUS}); commit stopped." >&2
-  exit 1
-fi
+grep_staged() {
+  local status
+  set +e
+  git --literal-pathspecs grep --no-color --cached -l -z -I -i -E -e "$PATTERN" -- "$@" \
+    | mapfile -d '' -t -O "${#FOUND[@]}" FOUND
+  status=${PIPESTATUS[0]}
+  set -e
+  if [ "$status" -gt 1 ]; then
+    echo "[pre-commit] ERROR: git grep failed (exit ${status}); commit stopped." >&2
+    exit 1
+  fi
+}
+
+# Chunks keep each command line under the Windows limit (32767 characters).
+CHUNK=()
+CHUNK_LEN=0
+for path in "${STAGED[@]}"; do
+  if [ "${#CHUNK[@]}" -gt 0 ] && [ $((CHUNK_LEN + ${#path} + 3)) -gt 20000 ]; then
+    grep_staged "${CHUNK[@]}"
+    CHUNK=()
+    CHUNK_LEN=0
+  fi
+  CHUNK+=("$path")
+  CHUNK_LEN=$((CHUNK_LEN + ${#path} + 3))
+done
+grep_staged "${CHUNK[@]}"
 
 [ "${#FOUND[@]}" -gt 0 ] || exit 0
 
-# Of those, the staged ones (added, copied, modified, renamed), with the index
-# mode and blob the rewrite needs. Raw format:
+# Index mode and blob of the found paths, which the rewrite needs. Raw format:
 # ":<old mode> <new mode> <old blob> <new blob> <status>" NUL "<path>" NUL.
 # The found paths go as pathspecs unless they would pass the Windows command
 # line limit (32767 characters); then the diff covers the whole index.

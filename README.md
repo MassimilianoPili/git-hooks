@@ -27,10 +27,13 @@ The path patterns are in `ai-artifacts.txt`. The attribution patterns are in `ai
   | Case | Before | Now |
   |---|---|---|
   | `block-ai-artifacts`, 800 staged files | 457 s | 2.3 s |
-  | `strip-ai-attribution`, 800 staged files | 304 s | 1 process if no file has attribution |
-  | `pre-commit` + `commit-msg`, usual commit | about 22 processes | about 11 processes |
+  | `strip-ai-attribution`, 800 staged files | 304 s | 2 processes if no file has attribution |
+  | `pre-commit` + `commit-msg`, usual commit | about 22 processes | about 12 processes |
 
   A file that does contain attribution costs about 8 processes to rewrite.
+- **Staged files only.** `strip-ai-attribution` searches only the staged files, never the whole
+  index. In v1.0.0 it searched the whole index: on a repository with 4,638 files that took
+  more than 30 minutes of CPU.
 - **Merge commits.** `block-ai-artifacts` unstages only paths that no parent has. A path that a
   parent already tracks stays in the commit. If it were unstaged, the merge commit would revert
   that branch's content without telling you.
@@ -65,7 +68,8 @@ somewhere else.
   line is one extended regular expression, and lines that start with `#` are comments. Path
   patterns match repository-relative paths: `(^|/)\.claude/` matches `.claude/x` and
   `sub/.claude/x`, but not `CLAUDE.md`. Attribution patterns match one line at a time and
-  ignore case.
+  ignore case. Do not start an attribution pattern with `^.*`: it matches the same lines
+  without it, and on very long lines (minified JavaScript) it makes the search take minutes.
 - **Other pattern files.** `AI_ARTIFACTS_FILE` and `AI_PATTERNS_FILE` override the two paths.
 - **Your own hooks.** Put an executable script in `hooks/<name>.d/`.
 - **Skip the hooks once.** `git commit --no-verify` skips `pre-commit` and `commit-msg`.
